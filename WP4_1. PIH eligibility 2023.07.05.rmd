@@ -1,0 +1,198 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (1) General Eligibility"
+output: html_notebook
+---
+
+last updated: 2023.05.17 (Lisa Kent)
+
+This notebook:
+* reads in master data set previously deduplicated and cleaned
+* applies eligibility criteria to master data
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+
+```{r}
+#read in master dataset
+mumpredict_preg_level_master <- read_csv("S:/HBS_E062/3. DATA/mumpredict_preg_level_master_2023.06.07_15.56.csv")
+```
+
+
+__CREATE A DATAFRAME OF DATES RELATING TO PREG START/END, EXPOSURE AND OUTCOME WINDOWS__
+```{r}
+wp4_dates <- wp4 %>% 
+  select(PREG_ID, STUDY_ID, LMP_CALC, T1_END, DOB_CALC) %>%
+  mutate(DATE_START_MINUS_90 = LMP_CALC - 90,
+         DATE_20W_GEST = LMP_CALC + 141,   #Window for outcome PIH: >=20weeks (140days)
+         DATE_6MO_POSTPART = DOB_CALC + 183)  #Window for outcome PIH:<6mo (456 days) postpartum
+
+#sanity check
+sum(is.na(wp4_dates$DATE_START_MINUS_90))
+```
+
+```{r}
+write_csv(wp4_dates, file=paste("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_dates_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+```{r}
+wp4_pih_elig <- mumpredict_preg_level_master %>% select(PREG_ID, reg_status, LMP_CALC)
+```
+
+
+__remove any pregnancy that does not have LMP_CALC (needed to define exposure window)__
+```{r}
+#NA for all pregnancy dates for a small number of pregnancies, therefore remove these pregnancies
+wp4_pih_elig <- wp4_pih_elig %>% filter (!is.na(LMP_CALC))
+```
+
+
+__Identify and remove pregnancies that have a prior diagnosis of hypertension__
+```{r}
+pas_long <- read_csv("S:/HBS_E062/3. DATA/pas_icd_long_narm_2023.06.07_14.57.csv")
+```
+
+```{r}
+pas_ht <- pas_long %>% filter(PAS_PHENO == "PAS_HYPERTENSION")
+```
+
+
+```{r}
+#epd long has linked BNF codes to phenotype conditions, but has not removed or flagged any relative to each pregnancy
+epd_long <- read_csv("S:/HBS_E062/3. DATA/epd_pheno_physical_long_2023.06.06_14.33.csv")
+```
+
+```{r}
+epd_ht <- epd_long %>% filter(PHENO == "EPD_HYPERTENSION")
+```
+
+
+```{r}
+#join dates on to pas
+pas_ht <- left_join(pas_ht %>% select(STUDY_ID, PAS_PHENO, ADMISSION_DATE), wp4_dates %>% select(STUDY_ID, PREG_ID, DATE_20W_GEST), by = "STUDY_ID", relationship = "many-to-many")
+
+#join dates on to epd
+epd_ht <- left_join(epd_ht %>% select(STUDY_ID, PHENO, ISSUE_DATE_NONMISS), wp4_dates %>% select(STUDY_ID, PREG_ID, DATE_20W_GEST), by = "STUDY_ID", relationship = "many-to-many")
+```
+
+
+```{r}
+#filter pregnancies that have hypertension phenotype recorded up to 20weeks gestation
+#pas
+pas_ht <- pas_ht %>% filter(ADMISSION_DATE < DATE_20W_GEST)
+
+#epd
+epd_ht <- epd_ht %>% filter(ISSUE_DATE_NONMISS < DATE_20W_GEST)
+
+```
+
+
+```{r}
+# Remove pregnancies that have previous hypertension (up to 20w)
+wp4_pih_elig <- wp4_pih_elig %>% filter(!PREG_ID %in% pas_ht$PREG_ID)
+
+wp4_pih_elig <- wp4_pih_elig %>% filter(!PREG_ID %in% epd_ht$PREG_ID)
+```
+
+__Remove any with missing covariates__
+
+```{r}
+covars <- mumpredict_preg_level_master %>% select(PREG_ID, AGE_AT_BIRTH, BMI_CAT_14TO70, DEPRIVATION_QUNTILE, SMOKING_STATUS, starts_with("FLAG_"))
+```
+
+```{r}
+#remove variables relating to alternative definitions of conditions
+names(covars)
+covars <- covars %>% select(-FLAG_ASTHMA_3PRESC, 
+                             -FLAG_ASTHMA_2PRESC, 
+                             -FLAG_ASTHMA_ALT,
+                             -FLAG_ECZEMA_3PRESC,
+                             -FLAG_ECZEMA_2PRESC,
+                             -FLAG_ECZEMA_ALT,
+                             -FLAG_ALLERGIC_RHINO_ANY,
+                             -FLAG_ALLERGIC_RHINO_ALT,
+                             -FLAG_HYPERTENSION_3PRESC,
+                             -FLAG_HYPERTENSION_2PRESC,
+                             -FLAG_THYROID_3PRESC,
+                             -FLAG_THYROID_2PRESC,
+                             -FLAG_IBD_3PRESC,
+                             -FLAG_IBD_2PRESC,
+                             -FLAG_MIGRAINE_3PRESC,
+                             -FLAG_MIGRAINE_2PRESC,
+                             -FLAG_PSORIASIS_3PRESC,
+                             -FLAG_PSORIASIS_2PRESC,
+                             -FLAG_DIABETES_3PRESC,
+                             -FLAG_DIABETES_2PRESC,
+                             -FLAG_EPILEPSY_3PRESC,
+                             -FLAG_EPILEPSY_2PRESC,
+                             -FLAG_EPILEPSY_ANY)
+names(covars)
+```
+
+
+```{r}
+#This wont be needed as NA already replaced in earlier master build
+covars <- covars %>%
+  mutate(across(starts_with("FLAG_"), ~ if_else(is.na(.x), 0, .x)))
+```
+
+```{r}
+sum(is.na(covars$SMOKING_STATUS))
+
+covars <- covars %>% 
+  mutate(SMOKING_STATUS = if_else(is.na(SMOKING_STATUS), "not recorded", SMOKING_STATUS)
+  )
+
+sum(is.na(covars$SMOKING_STATUS))
+```
+
+```{r}
+levels(as.factor(covars$SMOKING_STATUS))
+```
+
+
+```{r}
+sum(is.na(covars$AGE_AT_BIRTH) | is.na(covars$BMI_CAT_14TO70) | is.na(covars$DEPRIVATION_QUNTILE)| is.na(covars$SMOKING_STATUS))
+```
+
+
+```{r}
+covars <- covars %>% 
+  filter(!(is.na(AGE_AT_BIRTH) | is.na(BMI_CAT_14TO70) | is.na(DEPRIVATION_QUNTILE)| is.na(SMOKING_STATUS)))
+```
+
+```{r}
+# Remove pregnancies that have missing covariates
+wp4_pih_elig <- wp4_pih_elig %>% filter(PREG_ID %in% covars$PREG_ID)
+```
+
+
+
+__Save eligible cohort spine for future use__
+```{r}
+write_csv(wp4_pih_elig, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_elig_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+__Save covariates for future use in other outcome signal detection studies__
+```{r}
+write_csv(covars, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_covars_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################

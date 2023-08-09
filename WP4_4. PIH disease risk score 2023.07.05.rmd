@@ -1,0 +1,76 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (4) Disease Risk Score"
+output: html_notebook
+---
+
+last updated: 2023.05.17 (Lisa Kent)
+
+This notebook:
+* estimates the disease risk score for each pregnancy
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+
+```{r}
+if(!require(MatchIt)) install.packages("MatchIt")
+library(MatchIt)
+```
+
+
+
+```{r}
+risk_score_df <- left_join(covars, wp4_pih %>% select(PREG_ID, PIH_OUTCOME), by = "PREG_ID")
+```
+
+```{r}
+risk_score_df$PIH_OUTCOME[is.na(risk_score_df$PIH_OUTCOME)] <- 0
+```
+
+
+```{r}
+#get a string of all variables to be added to model formula
+my_names <- risk_score_df %>% select(AGE_AT_BIRTH, BMI_CAT_14TO70, DEPRIVATION_QUNTILE, SMOKING_STATUS, starts_with("FLAG")) %>% colnames()
+my_names <- paste0(my_names, collapse = " + ")
+my_names
+```
+
+
+```{r}
+risk_score_model <- matchit(PIH_OUTCOME ~ AGE_AT_BIRTH + BMI_CAT_14TO70 + DEPRIVATION_QUNTILE + SMOKING_STATUS + FLAG_ASTHMA_4PRESC + FLAG_ECZEMA_4PRESC + FLAG_ALLERGIC_RHINO_2PRESC6MO + FLAG_HYPERTENSION_4PRESC + FLAG_THYROID_4PRESC + FLAG_IBD_4PRESC + FLAG_MIGRAINE_4PRESC + FLAG_PSORIASIS_4PRESC + FLAG_DIABETES_4PRESC + FLAG_EPILEPSY_4PRESC + FLAG_BRONCHIECTASIS + FLAG_OTHER_DERMATOLOGY_CONDITIONS + FLAG_INFLAMMATORY_BOWEL_DISEASE + FLAG_SOMATOFORM_DISORDER + FLAG_VERTEBRAL_DISORDER + FLAG_CHRONIC_BACK_PAIN + FLAG_INFERTILITY + FLAG_ENDOMETROSIS + FLAG_DIABETIC_EYE_DISEASE + FLAG_UROLITHIASIS_KIDNEY_STONES + FLAG_EHLERS_DANLOS_SYNDROME_TYPE_3 + FLAG_INFLAMMATORY_ARTHRITIS + FLAG_CHRONIC_KIDNEY_DISEASE_CKD_3_5 + FLAG_SARCOIDOSIS + FLAG_SEVERE_BLINDNESS + FLAG_GALL_STONES + FLAG_DEAFNESS + FLAG_PEPTIC_ULCER_DISEASE + FLAG_HYPERPARATHYROIDISM + FLAG_POLYCYSTIC_OVARIAN_SYNDROME + FLAG_LEIOMYOMA + FLAG_PULMONARY_EMBOLISM + FLAG_OTHER_HEADACHES + FLAG_PERIPHERAL_NEUROPATHY + FLAG_PITUITARY_TUMOUR + FLAG_OBSTRUCTIVE_SLEEP_APNOEA + FLAG_INFLAMMATORY_EYE_DISEASE + FLAG_SYSTEMIC_LUPUS_ERYTHEMATOSUS + FLAG_ALL_OTHER_CANCERS + FLAG_SPONDYLOARTHRITIS + FLAG_EATING_DISORDER + FLAG_COELIAC_DISEASE + FLAG_PRIMARY_THROMBOCYTOPAENIA + FLAG_OSTEOARTHRITIS + FLAG_PERNICIOUS_ANAEMIA + FLAG_CATARACT + FLAG_IDIOPATHIC_INTRACRANIAL_HYPERTENSION + FLAG_CONGENITAL_HEART_DISEASE + FLAG_MULTIPLE_SCLEROSIS + FLAG_STROKE + FLAG_BREAST_CANCER + FLAG_ISCHEMIC_HEART_DISEASE_MYOCARDIAL_INFRACTION + FLAG_HEART_FAILURE + FLAG_SOLID_ORGAN_TRANSPLANT + FLAG_VENOUS_THROMBOEMBOLISM + FLAG_ATRIAL_FIBRILLATION + FLAG_CARDIOMYOPATHY + FLAG_HAEMOPHILIA + FLAG_CHRONIC_LIVER_DISEASE + FLAG_CHRONIC_OBSTRUCTIVE_PULMONARY_DISEASE + FLAG_SCOLIOSIS + FLAG_OSTEOPOROSIS + FLAG_SPINA_BIFIDA + FLAG_ADRENAL_TUMOUR + FLAG_VALVULAR_HEART_DISEASE + FLAG_PULMONARY_FIBROSIS_INSTERTITIAL_LUNG_DISEASE + FLAG_RETINAL_DETACHMENT + FLAG_PRIMARY_SYSTEMIC_VASCULITIS + FLAG_CYSTIC_FIBROSIS + FLAG_TURNERS_SYNDROME + FLAG_ISCHEMIC_HEART_DISEASE_MYOCARDIAL_INFARCTION + FLAG_AUTOIMMUNE_SKIN_DISEASE + FLAG_HIV_AIDS + FLAG_MARFANS_SYNDROME + FLAG_SICKLE_CELL_ANAEMIA + FLAG_PULMONARY_HYPERTENSION + FLAG_COMMON_MHD_EPD + FLAG_ANXIETY + FLAG_DEPRESSION + FLAG_SMI + FLAG_ALCOHOL + FLAG_SUBSTANCE + FLAG_NEURODEV + FLAG_OTHER_MH, data = risk_score_df, distance = "glm", method = "nearest", caliper = 0.2, replace = FALSE) 
+```
+
+```{r}
+summary(risk_score_model)
+```
+
+
+```{r}
+wp4_dis_risk_score <- risk_score_df %>% select(PREG_ID) %>% mutate(DISEASE_RISK_SCORE = risk_score_model$distance)
+```
+
+```{r}
+#check if any scores are 1(one)
+wp4_dis_risk_score %>% arrange(desc(DISEASE_RISK_SCORE)) %>% head(50)
+```
+
+__Save disease risk score for future use in other outcome signal detection studies__
+```{r}
+write_csv(wp4_dis_risk_score, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_dis_risk_score_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################

@@ -1,0 +1,132 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (5) Pregnancy Induced Hypertension - Calculation of Counts and Percentage "
+output: html_notebook
+---
+
+last updated: 2023.07.04 (Lisa Kent)
+
+This notebook:
+* calculates the number and percentage in each group (case and control) who were exposed to each medication in two exposure windows (90 days pre-pregnancy and trimester 1)
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+
+
+__90 DAYS PRE-PREGNANCY__
+```{r}
+wp4_pih_prepreg <- left_join(wp4_pih_outcome, epd_prepreg_wide, by = "PREG_ID")
+```
+
+```{r}
+wp4_pih_prepreg$PIH_OUTCOME[is.na(wp4_pih_prepreg$PIH_OUTCOME)] <- 0
+wp4_pih_prepreg <- wp4_pih_prepreg %>% mutate(across(starts_with("BNF"), ~ if_else(is.na(.x), 0, .x)))
+```
+
+```{r}
+wp4_pih_prepreg_sum <- wp4_pih_prepreg %>% 
+  select(PIH_OUTCOME, starts_with("BNF")) %>%
+  group_by(PIH_OUTCOME) %>%
+  summarise(across(everything(), sum))
+```
+
+```{r}
+wp4_pih_prepreg_sum_t <- t(wp4_pih_prepreg_sum)
+wp4_pih_prepreg_sum_t <- rownames_to_column(data.frame(wp4_pih_prepreg_sum_t))
+head(wp4_pih_prepreg_sum_t)
+```
+
+```{r}
+wp4_pih_prepreg_sum_t <- wp4_pih_prepreg_sum_t %>% 
+  rename(
+    BNF_CODE = rowname,
+    PREPREG_CONTROLS_N = X1,
+    PREPREG_CASES_N = X2
+    ) %>% 
+  slice(-1)
+head(wp4_pih_prepreg_sum_t)
+```
+
+
+
+
+```{r}
+wp4_pih_prepreg_sum_t <- wp4_pih_prepreg_sum_t %>%
+  mutate(
+    PREPREG_CONTROLS_PERC = round(PREPREG_CONTROLS_N / sum(wp4_pih_prepreg$PIH_OUTCOME == 0) * 100, 4),
+    PREPREG_CASES_PERC = round(PREPREG_CASES_N / sum(wp4_pih_prepreg$PIH_OUTCOME == 1) * 100, 4)
+  )
+head(wp4_pih_prepreg_sum_t)
+```
+
+```{r}
+write_csv(wp4_pih_prepreg_sum_t, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_prepreg_sum_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+__TRIMESTER 1__
+```{r}
+wp4_pih_trim1 <- left_join(wp4_pih_outcome, epd_trim1_wide, by = "PREG_ID")
+
+```
+
+```{r}
+wp4_pih_trim1$PIH_OUTCOME[is.na(wp4_pih_trim1$PIH_OUTCOME)] <- 0
+wp4_pih_trim1 <- wp4_pih_trim1 %>% mutate(across(starts_with("BNF"), ~ if_else(is.na(.x), 0, .x)))
+```
+
+
+```{r}
+wp4_pih_trim1_sum <- wp4_pih_trim1 %>% 
+  select(PIH_OUTCOME, starts_with("BNF")) %>%
+  group_by(PIH_OUTCOME) %>%
+  summarise(across(everything(), sum))
+```
+
+```{r}
+wp4_pih_trim1_sum_t <- t(wp4_pih_trim1_sum)
+wp4_pih_trim1_sum_t <- rownames_to_column(data.frame(wp4_pih_trim1_sum_t))
+head(wp4_pih_trim1_sum_t)
+```
+
+```{r}
+wp4_pih_trim1_sum_t <- wp4_pih_trim1_sum_t %>% 
+  rename(
+    BNF_CODE = rowname,
+    TRIM1_CONTROLS_N = X1,
+    TRIM1_CASES_N = X2
+    ) %>% 
+  slice(-1) 
+head(wp4_pih_trim1_sum_t)
+```
+
+```{r}
+wp4_pih_trim1_sum_t <- wp4_pih_trim1_sum_t %>%
+  mutate(
+    TRIM1_CONTROLS_PERC = round(TRIM1_CONTROLS_N / sum(wp4_pih_trim1$PIH_OUTCOME == 0) * 100, 4),
+    TRIM1_CASES_PERC = round(TRIM1_CASES_N / sum(wp4_pih_trim1$PIH_OUTCOME == 1) * 100, 4)
+  )
+head(wp4_pih_trim1_sum_t)
+```
+
+
+```{r}
+write_csv(wp4_pih_trim1_sum_t, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_trim1_sum_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################

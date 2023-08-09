@@ -1,0 +1,298 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (6) Pregnancy Induced Hypertension - Signal Detection"
+output: html_notebook
+---
+
+last updated: 2023.07.05 (Lisa Kent)
+
+This notebook:
+* joins all datasets together for disease risk score, covariates, exposures (medicines/BNF items) and outcome (PIH)
+
+* performs a looped logistic regression (unadj and adj) for PIH vs. each BNF item in the 90 days pre-pregnancy and trimester 1
+
+* results are gathered into a table with the names associated with each BNF item and prevalence of each item  in the case and control groups (n / %)
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+
+```{r}
+library(broom)
+```
+
+
+__90 DAYS PRE-PREGNANCY__
+
+```{r}
+#start by building the full dataset for the analysis which should include the disease risk score, covariates, medication exposures and outcomes
+
+
+wp4_pih_prepreg <- left_join(wp4_pih_elig, covars, by="PREG_ID") # use elig pregnancies as spine, join to covariates
+wp4_pih_prepreg <- left_join(wp4_pih_prepreg, wp4_dis_risk_score, by="PREG_ID") # join to disease risk score
+wp4_pih_prepreg <- left_join(wp4_pih_prepreg, wp4_pih_outcome %>% select(PREG_ID, PIH_OUTCOME), by="PREG_ID") #join to PIH outcome flag
+wp4_pih_prepreg <- left_join(wp4_pih_prepreg, epd_prepreg_wide, by="PREG_ID") #join to prepreg exposure
+```
+
+
+```{r}
+#z <- z %>% mutate(across(starts_with("BNF"), ~ if_else(is.na(.x), 0, .x)))
+wp4_pih_prepreg <- wp4_pih_prepreg %>% mutate(PIH_OUTCOME = if_else(is.na(PIH_OUTCOME), 0, PIH_OUTCOME))
+```
+
+```{r}
+#glimpse(wp4_pih_prepreg)
+```
+
+
+```{r}
+#get a string of all bnf items
+bnf_items_prepreg <- wp4_pih_prepreg %>% select(starts_with("BNF")) %>% colnames() 
+#bnf_items_prepreg
+```
+
+__unadjusted model__
+```{r}
+prepreg_unadj_table <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(prepreg_unadj_table) <- c("BNF_CODE", "PREPREG_UNADJ_EST", "PREPREG_UNADJ_SE", "PREPREG_UNADJ_P_VAL")
+
+for (item in seq_along(bnf_items_prepreg)) {
+  
+  mod_formula <- paste0("PIH_OUTCOME ~ ", bnf_items_prepreg[item])
+  mod <- glm(mod_formula, family=binomial(link="logit"), data = wp4_pih_prepreg)
+  
+  mod_output <- tidy(mod)
+  
+  prepreg_unadj_table[item,1] <- mod_output$term[2]
+  prepreg_unadj_table[item,2] <- mod_output$estimate[2]
+  prepreg_unadj_table[item,3] <- mod_output$std.error[2]
+  prepreg_unadj_table[item,4] <- mod_output$p.value[2]
+}
+```
+
+```{r}
+prepreg_unadj_table <- prepreg_unadj_table %>% 
+  mutate(
+    PREPREG_UNADJ_OR = exp(PREPREG_UNADJ_EST),
+    PREPREG_UNADJ_OR_LOWER_95CI = exp(PREPREG_UNADJ_EST - 1.96*PREPREG_UNADJ_SE),
+    PREPREG_UNADJ_OR_UPPER_95CI = exp(PREPREG_UNADJ_EST + 1.96*PREPREG_UNADJ_SE)
+    
+  )
+prepreg_unadj_table %>% filter(PREPREG_UNADJ_P_VAL <=0.01)
+  
+```
+
+```{r}
+write_csv(prepreg_unadj_table, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/prepreg_unadj_table_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+__adjusted model__
+```{r}
+prepreg_adj_table <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(prepreg_adj_table) <- c("BNF_CODE", "PREPREG_ADJ_EST", "PREPREG_ADJ_SE", "PREPREG_ADJ_P_VAL")
+
+for (item in seq_along(bnf_items_prepreg)) {
+  
+  mod_formula <- paste0("PIH_OUTCOME ~ DISEASE_RISK_SCORE + AGE_AT_BIRTH + BMI_CAT_14TO70 + DEPRIVATION_QUNTILE + SMOKING_STATUS + ", bnf_items_prepreg[item])
+  mod <- glm(mod_formula, family=binomial(link="logit"), data = wp4_pih_prepreg)
+  
+  mod_output <- tidy(mod)
+  
+  prepreg_adj_table[item,1] <- mod_output$term[13]
+  prepreg_adj_table[item,2] <- mod_output$estimate[13]
+  prepreg_adj_table[item,3] <- mod_output$std.error[13]
+  prepreg_adj_table[item,4] <- mod_output$p.value[13]
+}
+```
+
+```{r}
+prepreg_adj_table <- prepreg_adj_table %>% 
+  mutate(
+    PREPREG_ADJ_OR = exp(PREPREG_ADJ_EST),
+    PREPREG_ADJ_OR_LOWER_95CI = exp(PREPREG_ADJ_EST - 1.96*PREPREG_ADJ_SE),
+    PREPREG_ADJ_OR_UPPER_95CI = exp(PREPREG_ADJ_EST + 1.96*PREPREG_ADJ_SE)
+    
+  )
+prepreg_adj_table %>% filter(PREPREG_ADJ_P_VAL <=0.01)
+  
+```
+
+```{r}
+write_csv(prepreg_adj_table, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/prepreg_adj_table_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+__TRIMESTER 1__
+
+```{r}
+#start by building the full dataset for the analysis which should include the disease risk score, covariates, medication exposures and outcomes
+
+wp4_pih_trim1 <- left_join(wp4_pih_elig, covars, by="PREG_ID")
+wp4_pih_trim1 <- left_join(wp4_pih_trim1, wp4_dis_risk_score, by="PREG_ID")
+wp4_pih_trim1 <- left_join(wp4_pih_trim1, wp4_pih_outcome %>% select(PREG_ID, PIH_OUTCOME), by="PREG_ID")
+wp4_pih_trim1 <- left_join(wp4_pih_trim1, epd_trim1_wide, by="PREG_ID")
+```
+
+
+```{r}
+wp4_pih_trim1 <- wp4_pih_trim1 %>% mutate(PIH_OUTCOME = if_else(is.na(PIH_OUTCOME), 0, PIH_OUTCOME))
+```
+
+```{r}
+glimpse(wp4_pih_trim1)
+```
+
+```{r}
+#get a string of all bnf items
+bnf_items_trim1 <- wp4_pih_trim1 %>% select(starts_with("BNF")) %>% colnames() 
+bnf_items_trim1
+```
+
+__unadjusted model__
+```{r}
+trim1_unadj_table <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(trim1_unadj_table) <- c("BNF_CODE", "TRIM1_UNADJ_EST", "TRIM1_UNADJ_SE", "TRIM1_UNADJ_P_VAL")
+
+for (item in seq_along(bnf_items_trim1)) {
+  
+  mod_formula <- paste0("PIH_OUTCOME ~ ", bnf_items_trim1[item])
+  mod <- glm(mod_formula, family=binomial(link="logit"), data = wp4_pih_trim1)
+  
+  mod_output <- tidy(mod)
+  
+  trim1_unadj_table[item,1] <- mod_output$term[2]
+  trim1_unadj_table[item,2] <- mod_output$estimate[2]
+  trim1_unadj_table[item,3] <- mod_output$std.error[2]
+  trim1_unadj_table[item,4] <- mod_output$p.value[2]
+}
+```
+
+```{r}
+trim1_unadj_table <- trim1_unadj_table %>% 
+  mutate(
+    TRIM1_UNADJ_OR = exp(TRIM1_UNADJ_EST),
+    TRIM1_UNADJ_OR_LOWER_95CI = exp(TRIM1_UNADJ_EST - 1.96*TRIM1_UNADJ_SE),
+    TRIM1_UNADJ_OR_UPPER_95CI = exp(TRIM1_UNADJ_EST + 1.96*TRIM1_UNADJ_SE)
+    
+  )
+trim1_unadj_table %>% filter(TRIM1_UNADJ_P_VAL <=0.01)
+  
+```
+
+```{r}
+write_csv(trim1_unadj_table, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/trim1_unadj_table_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+__adjusted model__
+```{r}
+trim1_adj_table <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(trim1_adj_table) <- c("BNF_CODE", "TRIM1_ADJ_ESTIMATE", "TRIM1_ADJ_SE", "TRIM1_ADJ_P_VAL")
+
+for (item in seq_along(bnf_items_trim1)) {
+  
+  mod_formula <- paste0("PIH_OUTCOME ~ DISEASE_RISK_SCORE + AGE_AT_BIRTH + BMI_CAT_14TO70 + DEPRIVATION_QUNTILE + SMOKING_STATUS + ", bnf_items_trim1[item])
+  mod <- glm(mod_formula, family=binomial(link="logit"), data = wp4_pih_trim1)
+  
+  mod_output <- tidy(mod)
+  
+  trim1_adj_table[item,1] <- mod_output$term[13]
+  trim1_adj_table[item,2] <- mod_output$estimate[13]
+  trim1_adj_table[item,3] <- mod_output$std.error[13]
+  trim1_adj_table[item,4] <- mod_output$p.value[13]
+}
+```
+
+```{r}
+trim1_adj_table <- trim1_adj_table %>% 
+  mutate(
+    TRIM1_ADJ_OR = exp(TRIM1_ADJ_ESTIMATE),
+    TRIM1_ADJ_OR_LOWER_95CI = exp(TRIM1_ADJ_ESTIMATE - 1.96*TRIM1_ADJ_SE),
+    TRIM1_ADJ_OR_UPPER_95CI = exp(TRIM1_ADJ_ESTIMATE + 1.96*TRIM1_ADJ_SE)
+    
+  )
+trim1_adj_table %>% filter(TRIM1_ADJ_P_VAL <=0.01)
+  
+```
+
+```{r}
+write_csv(trim1_adj_table, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/trim1_adj_table_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+
+__gather results together with names of BNF items and prevalence__
+
+```{r}
+#read in if not already in environment
+#code_compare <- read_csv("S:/HBS_E062/3. DATA/WP4 Polypharmacy/code_compare_2023.07.04_13.29.csv")
+```
+
+```{r}
+pih_results <- left_join(code_compare, wp4_pih_prepreg_sum_t, by="BNF_CODE")
+```
+
+```{r}
+pih_results <- left_join(pih_results, prepreg_unadj_table, by="BNF_CODE")
+```
+
+```{r}
+pih_results <- left_join(pih_results, prepreg_adj_table, by="BNF_CODE")
+```
+
+```{r}
+head(pih_results)
+```
+
+
+```{r}
+pih_results <- pih_results %>%
+  mutate(
+    PREPREG_PDIFF = (PREPREG_UNADJ_P_VAL - PREPREG_ADJ_P_VAL)/PREPREG_UNADJ_P_VAL
+  )
+```
+
+```{r}
+pih_results <- left_join(pih_results, wp4_pih_trim1_sum_t, by="BNF_CODE")
+```
+
+
+```{r}
+pih_results <- left_join(pih_results, trim1_unadj_table, by="BNF_CODE")
+```
+
+```{r}
+pih_results <- left_join(pih_results, trim1_adj_table, by="BNF_CODE")
+```
+
+```{r}
+head(pih_results)
+```
+
+
+```{r}
+pih_results <- pih_results %>%
+  mutate(
+    TRIM1_PDIFF = (TRIM1_UNADJ_P_VAL - TRIM1_ADJ_P_VAL)/TRIM1_UNADJ_P_VAL
+  )
+```
+
+
+```{r}
+write_csv(pih_results, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_results_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################

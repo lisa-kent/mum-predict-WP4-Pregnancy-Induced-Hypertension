@@ -1,0 +1,264 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (2) Medication Exposure Windows"
+output: html_notebook
+---
+
+last updated: 2023.05.10 (Lisa Kent)
+
+This notebook:
+* prepares full BNF codes
+* for every instance of a dispensed item, creates a pregnancy level flag if medication issued within the exposure window 1)90 days pre-preg 2)trimester 1
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+__Lode odbc (Open Database Connectivity) package__
+```{r}
+if(!require(odbc)) install.packages("odbc")
+library(odbc)
+```
+
+__Declare connection to database__
+```{r}
+con <- dbConnect(odbc::odbc(), "hirusql3", timeout = 10)
+```
+
+
+
+__READ IN EPD FROM DATABASE__
+```{r}
+#likely to be very large!!!
+epd <- dbGetQuery(con,"Select * from [HDRNIHBS_E062].[EPD_1]")
+wp4_epd <- epd
+```
+
+```{r}
+#clean variable names and class
+names(wp4_epd) <- toupper(names(wp4_epd))
+wp4_epd$ISSUE_DATE <- as.Date(wp4_epd$ISSUE_DATE)
+glimpse(wp4_epd)
+```
+
+__Filter date range for study__
+```{r}
+# keep from Jan 2010 to Dec 2021
+
+wp4_epd <- wp4_epd %>% 
+  filter(ISSUE_DATE >= as.Date("2010-01-01") & ISSUE_DATE <= as.Date("2021-12-31"))
+
+```
+
+```{r}
+#sanity check - do we have correct dates?
+wp4_epd %>% group_by(ISSUE_DATE) %>% count()
+wp4_epd %>% filter (ISSUE_DATE >= as.Date("2021-01-01")) %>% group_by(ISSUE_DATE) %>% count()
+
+#are there any missing dates?
+sum(is.na(wp4_epd$ISSUE_DATE))
+```
+
+
+```{r}
+n_distinct(wp4_epd$VMP_NM)
+n_distinct(wp4_epd$VTM_NM)
+n_distinct(wp4_epd$BNF_CHAPTER)
+n_distinct(wp4_epd$BNF_CHAPTER, wp4_epd$BNF_SECTION)
+n_distinct(wp4_epd$BNF_CHAPTER, wp4_epd$BNF_SECTION, wp4_epd$BNF_PARAGRAPH)
+n_distinct(wp4_epd$BNF_CHAPTER, wp4_epd$BNF_SECTION, wp4_epd$BNF_PARAGRAPH, wp4_epd$BNF_SUB_PARAGRAPH)
+```
+
+
+
+__CREATE FLAGS IF MEDICATION ISSUED WITHIN EXPOSURE WINDOWS__
+```{r}
+epd_exposure <- left_join(wp4_epd, wp4_dates, by = "STUDY_ID", relationship = "many-to-many")
+```
+
+```{r}
+#flag each item if it was issued during the exposure windows
+epd_exposure <- epd_exposure %>%
+  mutate(
+    MED_EXPOSURE_PREPREG = if_else(ISSUE_DATE >= DATE_START_MINUS_90 & ISSUE_DATE < LMP_CALC, 1, 0),
+    MED_EXPOSURE_TRIM1 = if_else(ISSUE_DATE >= LMP_CALC & ISSUE_DATE < T1_END, 1, 0)
+  )
+
+#sanity check
+epd_exposure %>%
+  group_by(MED_EXPOSURE_PREPREG) %>% count()
+
+epd_exposure %>%
+  group_by(MED_EXPOSURE_TRIM1) %>% count()
+```
+
+
+```{r}
+epd_exposure <- epd_exposure %>% filter (!(is.na(DATE_START_MINUS_90)))
+```
+
+```{r}
+levels(as.factor(epd_exposure$BNF_CHAPTER))
+levels(as.factor(epd_exposure$BNF_SECTION))
+levels(as.factor(epd_exposure$BNF_PARAGRAPH))
+levels(as.factor(epd_exposure$BNF_SUB_PARAGRAPH))
+```
+
+```{r}
+#Add in 0 in front of single digit codes to allow for a full 8 digit bnf code to be created
+epd_exposure$BNF_CHAPTER <- as.character(epd_exposure$BNF_CHAPTER)
+epd_exposure$BNF_SECTION <- as.character(epd_exposure$BNF_SECTION)
+epd_exposure$BNF_PARAGRAPH <- as.character(epd_exposure$BNF_PARAGRAPH)
+epd_exposure$BNF_SUB_PARAGRAPH <- as.character(epd_exposure$BNF_SUB_PARAGRAPH)
+
+
+epd_exposure <- epd_exposure %>%
+  mutate(
+    BNF_CHAPTER = if_else(nchar(BNF_CHAPTER) == 1, paste0("0", BNF_CHAPTER), BNF_CHAPTER),
+    BNF_SECTION = if_else(nchar(BNF_SECTION) == 1, paste0("0", BNF_SECTION), BNF_SECTION),
+    BNF_PARAGRAPH = if_else(nchar(BNF_PARAGRAPH) == 1, paste0("0", BNF_PARAGRAPH), BNF_PARAGRAPH),
+    BNF_SUB_PARAGRAPH = if_else(nchar(BNF_SUB_PARAGRAPH) == 1, paste0("0", BNF_SUB_PARAGRAPH), BNF_SUB_PARAGRAPH),
+    BNF_CODE = paste0(BNF_CHAPTER, BNF_SECTION, BNF_PARAGRAPH, BNF_SUB_PARAGRAPH)
+         )
+
+
+levels(as.factor(epd_exposure$BNF_CHAPTER))
+levels(as.factor(epd_exposure$BNF_SECTION))
+levels(as.factor(epd_exposure$BNF_PARAGRAPH))
+levels(as.factor(epd_exposure$BNF_SUB_PARAGRAPH))
+
+```
+
+
+```{r}
+levels(as.factor(epd_exposure$BNF_CODE))
+```
+
+```{r}
+# COMPARISON OF BNF_CODES and MEDICATION NAMES IN NI DATA VS. CPRD
+
+# read in the BNF code and name for the 570 exposure medications
+wp4_bnf_codes <- read_csv("S:/HBS_E062/3. DATA/WP4 Polypharmacy/BNF codes 2023.05.15.csv",
+                          col_types = list(col_character()))
+# any with a zero at start are being concatenated to 7 chars
+
+wp4_bnf_codes <- wp4_bnf_codes %>%
+  mutate(bnf_code = if_else(nchar(as.character(bnf_code)) == 7, paste0("0", bnf_code), bnf_code))
+wp4_bnf_codes$WP4_FLAG <- 1
+
+epd_codes1 <- epd_exposure %>% group_by(BNF_CODE) %>%
+  summarise(VTM_NM_LIST = paste(sort(unique(VTM_NM)), collapse="; "))
+
+epd_codes2 <- epd_exposure %>% group_by(BNF_CODE) %>% summarise(COUNT = n_distinct(PREG_ID))
+epd_codes2$EPD_FLAG <- 1
+
+epd_codes3 <- left_join(epd_codes1, epd_codes2, by = "BNF_CODE")
+
+code_compare <- full_join(epd_codes3, wp4_bnf_codes, by = c("BNF_CODE" = "bnf_code"))
+
+code_compare <- code_compare %>% arrange(BNF_CODE)
+
+code_compare <- code_compare %>% mutate(BNF_CODE = paste0("BNF_", BNF_CODE))
+
+code_compare %>% group_by(EPD_FLAG, WP4_FLAG) %>% count()
+
+write_csv(code_compare, file = paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/code_compare_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+# 
+# epd_exposure <- left_join(epd_exposure, code_compare, by = "BNF_CODE")
+# 
+# #inspect bnf codes in epd that have no link to mum-predict bnf codes
+# #ensure that they are for non-medicinal items (e.g. dressings)
+# 
+# epd_exposure %>% filter(is.na(description)) %>% group_by(BNF_CODE, VTM_NM) %>% count()
+# epd_exposure %>% filter(is.na(description)) %>% group_by(BNF_CODE) %>% count()
+# epd_exposure %>% filter(is.na(description)) %>% group_by(BNF_CODE) %>% summarise(COUNT = n_distinct(PREG_ID))
+```
+
+
+__Create separate "wide" data frame for 90 days pre-preg exposure__
+```{r}
+#pre-pregnancy exposures
+epd_prepreg <- epd_exposure %>% filter(MED_EXPOSURE_PREPREG == 1) %>% select(PREG_ID, BNF_CODE)
+```
+
+```{r}
+#sanity check - does filtering by 90day pre-preg exposure reduce the number of items?
+levels(as.factor(epd_prepreg$BNF_CODE))
+```
+
+
+
+```{r}
+#flip to wide (i.e. each BNF_CODE becomes a binary variable - 1=exposed; 0=not)
+epd_prepreg <- epd_prepreg %>%
+  group_by(PREG_ID, BNF_CODE) %>%
+  summarise(COUNT = n())
+
+epd_prepreg$COUNT[epd_prepreg$COUNT>0] <- 1
+
+epd_prepreg_wide <- epd_prepreg %>%
+  pivot_wider(names_from = BNF_CODE,
+              values_from = COUNT,
+              values_fill = 0)
+
+head(epd_prepreg_wide)
+```
+
+
+__Create separate "wide" data frame for trimester 1 exposure__
+```{r}
+epd_trim1 <- epd_exposure %>% filter(MED_EXPOSURE_TRIM1 == 1) %>% select(PREG_ID, BNF_CODE)
+```
+
+```{r}
+#sanity check - does filtering by trimester 1 exposure reduce the number of items?
+levels(as.factor(epd_trim1$BNF_CODE))
+```
+
+
+
+```{r}
+#flip to wide (i.e. each BNF_CODE becomes a binary variable - 1=exposed; 0=not)
+epd_trim1 <- epd_trim1 %>%
+  group_by(PREG_ID, BNF_CODE) %>%
+  summarise(COUNT = n())
+
+epd_trim1$COUNT[epd_trim1$COUNT>0] <- 1
+
+epd_trim1_wide <- epd_trim1 %>%
+  pivot_wider(names_from = BNF_CODE,
+              values_from = COUNT,
+              values_fill = 0)
+
+head(epd_trim1_wide)
+```
+
+```{r}
+#add prefix to BNF_CODE to allow for easier variable selection later in pipeline
+epd_prepreg_wide <- epd_prepreg_wide %>% rename_with(~ paste0("BNF_", .), -PREG_ID)
+
+epd_trim1_wide <- epd_trim1_wide %>% rename_with(~ paste0("BNF_", .), -PREG_ID)
+```
+
+
+
+```{r}
+#saving wide dataset of binary flags for exposure to medications (Full BNF code) in 90 days pre-pregnancy
+write_csv(epd_prepreg_wide, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/epd_prepreg_wide_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+
+#saving wide dataset of binary flags for exposure to medications (Full BNF code) in trimester one
+write_csv(epd_trim1_wide, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/epd_trim1_wide_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+
+```
+
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################

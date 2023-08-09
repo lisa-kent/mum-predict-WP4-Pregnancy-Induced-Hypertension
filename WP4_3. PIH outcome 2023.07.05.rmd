@@ -1,0 +1,222 @@
+---
+title: "MuM_PreDiCT WP4 Polypharmacy (3) Pregnancy Induced Hypertension - Outcome Identification"
+output: html_notebook
+---
+
+last updated: 2023.05.17 (Lisa Kent)
+
+This notebook:
+* Takes a three stage approach to identifying PIH
+
+* 1. From medications (EPD)
+* 2. From diagnosis code (PAS)
+* 3. From "PRESENT PREGNANCY PROBLEMS" variable (NIMATS)
+
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+```
+
+__Lode odbc (Open Database Connectivity) package__
+```{r}
+if(!require(odbc)) install.packages("odbc")
+library(odbc)
+```
+
+__Declare connection to database__
+```{r}
+con <- dbConnect(odbc::odbc(), "hirusql3", timeout = 10)
+```
+
+```{r}
+#read in previous preg level data (if needed)
+#mumpredict_wp4 <- read_csv
+```
+
+
+
+
+__OUTCOME: PIH__
+__(1) EPD -> PIH defined using medications of interest__
+```{r}
+wp4_epd_outcome <- left_join(wp4_epd %>% select(STUDY_ID, VTM_NM, ISSUE_DATE), wp4_dates %>% select(STUDY_ID, PREG_ID, DATE_20W_GEST, DATE_6MO_POSTPART), by = "STUDY_ID", relationship = "many-to-many")
+```
+
+
+```{r}
+#flag pregnancies with PIH-related medications
+
+wp4_epd_outcome <- wp4_epd_outcome %>%
+  mutate(
+    PIH_OUTCOME_MED = if_else(
+      grepl("amlodipine|doxazosin|labetalol|methyldopa|nifedipine", tolower(VTM_NM)) & 
+        ISSUE_DATE >= DATE_20W_GEST & 
+        ISSUE_DATE < DATE_6MO_POSTPART, 
+      1, 0
+    )
+  )
+```
+
+
+```{r}
+wp4_epd_outcome <- wp4_epd_outcome %>% select(PREG_ID, PIH_OUTCOME_MED) %>% distinct() %>% group_by(PREG_ID) %>% slice_max(PIH_OUTCOME_MED)
+```
+
+
+__(2) PAS -> PIH defined using ICD-10 codes of interest__
+```{r}
+pas <- dbGetQuery(con,"Select * from [HDRNIHBS_E062].[PAS_1]")
+colnames(pas) <- toupper(colnames(pas))
+```
+
+```{r}
+pas <- pas %>% 
+  mutate(across(where(is.character), str_trim))
+```
+
+
+```{r}
+pas_icd <- pas %>% select(STUDY_ID, ADMISSION_DATE, contains("DIAGNOSIS"))
+```
+
+```{r}
+#create long df of ICD10 codes (with study-id and admission date)
+pas_icd_long <- pas_icd %>%
+  pivot_longer(cols = PRIMARY_DIAGNOSIS_CODE:SECONDARY_DIAGNOSIS_15, names_to = "VAR", values_to = "ICD10_CODE")
+head(pas_icd_long, 20)
+nrow(pas_icd_long)
+```
+
+```{r}
+#remove rows where no ICD10 code recorded
+pas_icd_long_narm <- pas_icd_long[!is.na(pas_icd_long$ICD10_CODE), ]
+head(pas_icd_long_narm, 20)
+nrow(pas_icd_long_narm)
+```
+
+
+
+```{r}
+icd_outcomes <- read_csv("S:/HBS_E062/2. CODE/code lists/ICD_outcomes_full_2023.06.28.csv")
+```
+
+```{r}
+#extract icd-10 codes related to pre-eclampsia and gestational hypertension
+icd_pih_list <- icd_outcomes %>% filter(
+  OUTCOME == "Preeclampsia_Prevalence_mumpredict_ICD10" |
+    OUTCOME == "GestationalHypertension_mumpredict_ICD10") %>% 
+  pull(READ_CODE)
+```
+
+```{r}
+# append hypertension ICD10 codes to list
+hypertension <- c("I11","I12","I13","I15","I10")
+icd_pih_list <- append(icd_pih_list, hypertension, length(icd_pih_list))
+```
+
+
+
+```{r}
+# for 4 characters ICD-10 code we extract the first 5 chars (i.e. XXX.X)
+pas_icd_long_narm$ICD10_CODE_4CHAR <- substr(pas_icd_long_narm$ICD10_CODE, 1, 5)
+
+# for 3 characters ICD-10 code we extract the first 3 chars (i.e. XXX)
+pas_icd_long_narm$ICD10_CODE_3CHAR <- substr(pas_icd_long_narm$ICD10_CODE, 1, 3)
+```
+
+```{r}
+wp4_pas_outcome <- left_join(pas_icd_long_narm %>% select(STUDY_ID, ADMISSION_DATE, ICD10_CODE_4CHAR, ICD10_CODE_3CHAR), wp4_dates %>% select(STUDY_ID, PREG_ID, DATE_20W_GEST, DATE_6MO_POSTPART), by = "STUDY_ID", relationship = "many-to-many")
+```
+
+
+```{r}
+wp4_pas_outcome <- wp4_pas_outcome %>% mutate(
+  PIH_OUTCOME_ICD = if_else(
+    (ICD10_CODE_4CHAR %in% icd_pih_list | ICD10_CODE_3CHAR %in% icd_pih_list) &
+      ADMISSION_DATE >= DATE_20W_GEST & 
+        ADMISSION_DATE < DATE_6MO_POSTPART,
+    1, 0
+  )
+)
+
+```
+
+```{r}
+wp4_pas_outcome <- wp4_pas_outcome %>% select(PREG_ID, PIH_OUTCOME_ICD) %>% distinct() %>% group_by(PREG_ID) %>% slice_max(PIH_OUTCOME_ICD)
+```
+
+
+
+__(3) NIMATS -> PIH defined using variable "PRESENT PREGNANCY PROBLEMS"__
+```{r}
+wp4_pih_outcome <- wp4 %>% select(STUDY_ID, PREG_ID, `PRES_PREG_PROB_P.I.H.`, `PRES_PREG_PROB_P.I.H._+_PROTEINURIA`, PRES_PREG_PROB_ECLAMPSIA)
+names(wp4_pih)
+```
+
+```{r}
+wp4_pih_outcome <- wp4_pih_outcome %>%
+  mutate(
+    PIH_OUTCOME_NIMATS = if_else(`PRES_PREG_PROB_P.I.H.` == 1 |
+                                   `PRES_PREG_PROB_P.I.H._+_PROTEINURIA` == 1 |
+                                   `PRES_PREG_PROB_ECLAMPSIA` == 1,
+                                 1, 0
+                                 )
+    )
+```
+
+
+__JOIN OUTCOME DATAFRAMES TOGETHER__
+```{r}
+wp4_pih_outcome <- left_join(wp4_pih_outcome, wp4_epd_outcome, by = "PREG_ID")
+```
+
+```{r}
+wp4_pih_outcome <- left_join(wp4_pih_outcome, wp4_pas_outcome, by = "PREG_ID")
+```
+
+
+__CREATE OUTCOME FLAG WHICH COMBINES ALL THREE METHODS OF IDENTIFYING PIH__
+```{r}
+wp4_pih_outcome <- wp4_pih_outcome %>%
+  mutate(
+    PIH_OUTCOME = if_else(PIH_OUTCOME_NIMATS == 1 |
+                            PIH_OUTCOME_ICD == 1 |
+                            PIH_OUTCOME_MED == 1,
+                          1, 0
+                          )
+    )
+```
+
+```{r}
+sum(wp4_pih_outcome$PIH_OUTCOME_NIMATS)
+sum(wp4_pih_outcome$PIH_OUTCOME_ICD, na.rm=T)
+sum(wp4_pih_outcome$PIH_OUTCOME_MED, na.rm=T)
+sum(wp4_pih_outcome$PIH_OUTCOME, na.rm=T)
+sum(wp4_pih_outcome$PIH_OUTCOME_ICD==1 | wp4_pih$PIH_OUTCOME_MED==1, na.rm=T)
+```
+
+```{r}
+sum(is.na(wp4_pih_outcome$STUDY_ID))
+sum(is.na(wp4_pih_outcome$PREG_ID))
+```
+
+```{r}
+wp4_pih_outcome <- wp4_pih_outcome %>% select(-STUDY_ID)
+```
+
+```{r}
+#saving wide dataset of binary flags for pih
+write_csv(wp4_pih_outcome, file=paste0("S:/HBS_E062/3. DATA/WP4 Polypharmacy/wp4_pih_outcome_", format(lubridate::now(), "%Y.%m.%d_%H.%M"),".csv"))
+```
+
+############################################################################
+#######                         REMINDERS/ TO DO                     #######
+############################################################################
+
+############################################################################
+
+
+
+######################################
+#######           END          #######
+######################################
